@@ -1,0 +1,27 @@
+{
+  "name": "kanadetune",
+  "version": "0.3.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "bundle": "esbuild src/app.js --bundle --format=esm --minify --outfile=www/bundle.js",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "keywords": [],
+  "author": "cognitiveshadows",
+  "license": "MIT",
+  "description": "KanadeTune — a light, cute desktop player for YouTube Music (Tauri)",
+  "type": "module",
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-global-shortcut": "^2.3.2",
+    "@tauri-apps/plugin-http": "^2.5.9",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "youtubei.js": "^18.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "esbuild": "^0.28.2"
+  }
+}
