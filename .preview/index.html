@@ -12,6 +12,7 @@
     <button class="railBtn active" data-view="home" title="Home"><svg viewBox="0 0 24 24"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z"/></svg><span>Home</span></button>
     <button class="railBtn" data-view="search" title="Search"><svg viewBox="0 0 24 24"><path d="M10 2a8 8 0 105.3 14l5 5 1.4-1.4-5-5A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg><span>Search</span></button>
     <button class="railBtn" data-view="library" title="Library"><svg viewBox="0 0 24 24"><path d="M4 4h3v16H4zM9 4h3v16H9zM14.5 5.2l2.9-.8 3.6 14.5-2.9.8z"/></svg><span>Library</span></button>
+    <button class="railBtn" data-view="history" title="History"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 00-9 9H1l4 4 4-4H6a7 7 0 117 7v2a9 9 0 000-18zm-1 5v5l4.2 2.5.8-1.3-3.5-2.1V8z"/></svg><span>History</span></button>
     <div class="railSpace"></div>
     <button class="railBtn" data-view="settings" title="Settings"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm8.9 4a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 00-2.1-1.2L16 3h-4l-.4 2.7a7 7 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7 7 0 000 2.4l-2 1.5 2 3.4 2.3-1a7 7 0 002.1 1.2L12 21h4l.4-2.7a7 7 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.07-.4.1-.8.1-1.2z"/></svg><span>Settings</span></button>
     <button class="railBtn" data-view="about" title="About"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 5h2v2h-2zm0 4h2v6h-2z"/></svg><span>About</span></button>
@@ -19,7 +20,14 @@
 
   <main id="content">
     <section id="view-home" class="view active">
-      <h1 class="pageTitle">Home</h1>
+      <div class="pageHead">
+        <h1 class="pageTitle">Home</h1>
+        <button id="homeRefresh" class="btn sm" title="Refresh feed">↻ Refresh</button>
+      </div>
+      <div id="signinHint" class="hintCard hidden">
+        <div>Sign in with Google for your own playlists, mixes and recommendations.</div>
+        <button class="btn" id="hintSignin">Sign in</button>
+      </div>
       <div id="homeFeed"><div class="muted pad">Loading your feed…</div></div>
     </section>
 
@@ -33,20 +41,76 @@
 
     <section id="view-library" class="view">
       <h1 class="pageTitle">Library</h1>
+      <div id="ytLibraryWrap" class="hidden">
+        <h2 class="secTitle">Your YouTube Music library</h2>
+        <div id="ytLibrary" class="qpGrid"></div>
+      </div>
+      <h2 class="secTitle">Favourites</h2>
+      <div id="favList" class="songList"></div>
+      <div id="favEmpty" class="muted pad">Tap the ♡ on any song to keep it here.</div>
       <h2 class="secTitle">Recently played</h2>
       <div id="recentList" class="songList"></div>
       <div id="libraryEmpty" class="muted pad">Songs you play will appear here.</div>
     </section>
 
+    <section id="view-history" class="view">
+      <div class="pageHead">
+        <h1 class="pageTitle">History</h1>
+        <button id="clearHistory" class="btn sm danger">Clear history</button>
+      </div>
+      <div id="historyList" class="songList"></div>
+      <div id="historyEmpty" class="muted pad">Your full listening history appears here.</div>
+    </section>
+
     <section id="view-settings" class="view">
       <h1 class="pageTitle">Settings</h1>
+
+      <h2 class="secTitle">Account</h2>
+      <div class="setCard">
+        <div class="setRow">
+          <div>
+            <div class="setName" id="accountState">Not signed in</div>
+            <div class="setDesc">Sign in with Google (device code — opens google.com/device) to get your playlists, likes and personal mixes. Tokens stay on this device only.</div>
+          </div>
+          <div class="setCtl"><button id="btnAuth" class="btn">Sign in with Google</button></div>
+        </div>
+        <div class="setRow" id="authCodeRow" style="display:none">
+          <div>
+            <div class="setName">Enter this code at <span id="authUrl" class="mono">google.com/device</span></div>
+            <div class="setDesc mono big" id="authCode">—</div>
+          </div>
+          <div class="setCtl"><button id="btnAuthOpen" class="btn">Open page</button></div>
+        </div>
+      </div>
+
+      <h2 class="secTitle">Region</h2>
+      <div class="setCard">
+        <div class="setRow">
+          <div>
+            <div class="setName">Content region</div>
+            <div class="setDesc">Auto uses your IP location so charts, moods and recommendations match your country. <span id="regionNow"></span></div>
+          </div>
+          <div class="setCtl">
+            <select id="regionSel">
+              <option value="auto">Auto (my IP)</option>
+              <option value="IN">India</option>
+              <option value="US">United States</option>
+              <option value="JP">Japan</option>
+              <option value="GB">United Kingdom</option>
+              <option value="DE">Germany</option>
+              <option value="BR">Brazil</option>
+              <option value="KR">Korea</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
       <h2 class="secTitle">Storage</h2>
       <div class="setCard">
         <div class="setRow">
           <div>
             <div class="setName">Artwork cache limit</div>
-            <div class="setDesc">Album art is cached on disk for fast, offline-friendly browsing. Oldest images are removed automatically when the limit is reached.</div>
+            <div class="setDesc">Album art is cached on disk. Oldest images are removed automatically when the limit is reached.</div>
           </div>
           <div class="setCtl">
             <select id="cacheCap">
@@ -69,27 +133,26 @@
       <h2 class="secTitle">Playback</h2>
       <div class="setCard">
         <div class="setRow">
-          <div>
-            <div class="setName">Resume volume</div>
-            <div class="setDesc">Remember volume between sessions.</div>
-          </div>
+          <div><div class="setName">Resume volume</div><div class="setDesc">Remember volume between sessions.</div></div>
           <div class="setCtl"><input type="checkbox" id="rememberVol" checked /></div>
+        </div>
+        <div class="setRow">
+          <div><div class="setName">Keep history</div><div class="setDesc">Record played songs in History. Turn off for private listening.</div></div>
+          <div class="setCtl"><input type="checkbox" id="keepHistory" checked /></div>
         </div>
       </div>
     </section>
 
     <section id="view-about" class="view">
       <h1 class="pageTitle">About</h1>
-
       <div class="aboutCard">
         <div class="aboutLogo">♪</div>
         <div>
           <div class="aboutName">KanadeTune</div>
-          <div class="aboutSub" id="aboutVersion">v0.2.0 · MIT License</div>
+          <div class="aboutSub" id="aboutVersion">v0.3.0 · MIT License</div>
           <div class="aboutDesc">A light, cute desktop player for YouTube Music. No backend, no ads — audio streams straight from your machine. 奏でる — to play music.</div>
         </div>
       </div>
-
       <h2 class="secTitle">Team</h2>
       <div class="aboutCard link" data-href="https://github.com/cognitiveshadows03">
         <div class="aboutLogo">👤</div>
@@ -99,7 +162,6 @@
           <div class="aboutDesc">github.com/cognitiveshadows03</div>
         </div>
       </div>
-
       <h2 class="secTitle">Inspired by</h2>
       <div class="aboutCard link" data-href="https://github.com/rukamori/ArchiveTune">
         <div class="aboutLogo">🌸</div>
@@ -109,12 +171,8 @@
           <div class="aboutDesc">KanadeTune's design and spirit are inspired by ArchiveTune — the cutest music player for Android. Go star it!</div>
         </div>
       </div>
-
       <h2 class="secTitle">Built with</h2>
-      <div class="aboutCard">
-        <div class="aboutDesc">Tauri 2 · WebView2 · youtubei.js (LuanRT) · LRCLIB lyrics · MIT licensed<br /><span id="runtimeInfo"></span></div>
-      </div>
-
+      <div class="aboutCard"><div class="aboutDesc">Tauri 2 · WebView2 · youtubei.js (LuanRT) · LRCLIB lyrics · MIT licensed<br /><span id="runtimeInfo"></span></div></div>
       <div class="aboutFoot">Independent third-party client. Not affiliated with Google LLC or YouTube. Support artists through official channels. 💙</div>
     </section>
   </main>
@@ -142,17 +200,24 @@
   <div id="playerInner">
     <div class="artCol"><img id="playerArt" alt="" /></div>
     <div class="ctlCol">
-      <div id="playerTitle" class="pt">—</div>
-      <div id="playerArtist" class="pa">—</div>
+      <div class="titleRow">
+        <div class="titleCol">
+          <div id="playerTitle" class="pt">—</div>
+          <div id="playerArtist" class="pa">—</div>
+        </div>
+        <button id="btnFav" class="cbtn" title="Favourite"><svg viewBox="0 0 24 24"><path class="favPath" d="M12 21l-1.5-1.3C5.2 15 2 12.1 2 8.5 2 5.5 4.4 3 7.4 3c1.7 0 3.4.8 4.6 2.1C13.2 3.8 14.9 3 16.6 3 19.6 3 22 5.5 22 8.5c0 3.6-3.2 6.5-8.5 11.2z" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+      </div>
       <div class="badgeRow"><span id="fmtBadge" class="badge">—</span></div>
 
       <div id="seekWrap"><div id="seekBar"><div id="seekFill"></div><div id="seekThumb"></div></div></div>
       <div class="timeRow"><span id="tCur">0:00</span><span id="tTot">0:00</span></div>
 
       <div class="bigCtl">
+        <button id="btnShuffle" class="cbtn sm2" title="Shuffle"><svg viewBox="0 0 24 24"><path d="M17 3l4 4-4 4V8h-2.6l-2.2 3.1-1.8-1.4L13.5 6H17zm-6.6 8.9l1.8 1.4L8.5 18H4v-2h3.5l2.9-4.1zM17 16v-3l4 4-4 4v-3h-3.5l-2.3-3.2 1.8-1.4L15 16z"/></svg></button>
         <button id="btnPrev" class="cbtn lg" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm12 0v14L9 12z"/></svg></button>
         <button id="btnPlay" class="cbtn accent xl" title="Play/Pause"><svg viewBox="0 0 24 24"><path class="iconPlay" d="M8 5v14l11-7z"/></svg></button>
         <button id="btnNext" class="cbtn lg" title="Next"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM6 5l9 7-9 7z"/></svg></button>
+        <button id="btnRepeat" class="cbtn sm2" title="Repeat"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z"/></svg></button>
       </div>
 
       <div class="volRow">
@@ -164,6 +229,8 @@
       <div class="subCtl">
         <button id="btnLyrics" class="chip">Lyrics</button>
         <button id="btnQueue" class="chip">Up next</button>
+        <button id="btnSpeed" class="chip" title="Playback speed">1.0×</button>
+        <button id="btnSleep" class="chip" title="Sleep timer">Sleep</button>
       </div>
     </div>
 
@@ -173,6 +240,8 @@
     </div>
   </div>
 </div>
+
+<div id="toast" class="hidden"></div>
 
 <script type="module" src="bundle.js"></script>
 </body>

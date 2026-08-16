@@ -13,11 +13,16 @@
       "allow": [
         { "url": "https://*.youtube.com/*" },
         { "url": "https://music.youtube.com/*" },
+        { "url": "https://www.youtube.com/*" },
         { "url": "https://*.googlevideo.com/*" },
         { "url": "https://*.ggpht.com/*" },
         { "url": "https://*.googleusercontent.com/*" },
         { "url": "https://i.ytimg.com/*" },
-        { "url": "https://lrclib.net/*" }
+        { "url": "https://lrclib.net/*" },
+        { "url": "https://ipwho.is/*" },
+        { "url": "https://oauth2.googleapis.com/*" },
+        { "url": "https://accounts.google.com/*" },
+        { "url": "https://www.googleapis.com/*" }
       ]
     }
   ]

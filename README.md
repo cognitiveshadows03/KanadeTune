@@ -6,9 +6,12 @@
 
 ## ✨ Features
 
-- 🔍 Search YouTube Music (songs + videos)
-- 🏠 Home feed with playlist shelves — click a card to play the whole playlist
+- 🔍 Search YouTube Music (songs + videos, with general-video fallback)
+- 🏠 Region-aware home feed (auto-detected from your IP, overridable) with MD3 quick-pick cards and playlist shelves
 - ▶️ Flat, clean player — album-art accent color, **zero glass/blur effects**, compositor-only animations at your display's native refresh rate
+- 🔐 **Google sign-in** (TV device-code flow — no client secret shipped) for your playlists, likes and personal mixes
+- 🕘 Full listening **History** (with privacy toggle + clear), Favourites, and Recently played
+- 🔀 Shuffle, repeat (all/one), playback **speed control**, **sleep timer**
 - 💬 Synced lyrics (LRCLIB) with click-to-seek; plain-lyrics fallback from YT Music
 - ⏭ Auto "Up next" radio queue
 - 🗃 **Size-capped artwork cache** (LRU, 50–500 MB, user-configurable in Settings, one-click clear)

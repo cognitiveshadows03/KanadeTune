@@ -1,18 +1,64 @@
 // ytm.js — InnerTube service layer, runs inside the WebView.
 // All HTTP goes through Tauri's Rust core (plugin-http fetch) => no CORS, no backend.
+// Session is created with the user's region (detected from their IP) + language,
+// and optionally with the user's Google/YouTube cookies for personalized content.
 import { Innertube, UniversalCache } from 'youtubei.js/web';
 import { fetch as tfetch } from '@tauri-apps/plugin-http';
+import { loadCreds, saveCreds } from './auth.js';
 
 let ytPromise = null;
+
+async function detectRegion() {
+  const override = localStorage.getItem('kanade.region');
+  if (override && override !== 'auto') return override;
+  const cached = localStorage.getItem('kanade.geo');
+  if (cached) return cached;
+  try {
+    const res = await tfetch('https://ipwho.is/', { headers: { Accept: 'application/json' } });
+    const j = await res.json();
+    if (j?.country_code) {
+      localStorage.setItem('kanade.geo', j.country_code);
+      return j.country_code;
+    }
+  } catch { /* offline / blocked */ }
+  return 'US';
+}
+
 function getYT() {
   if (!ytPromise) {
-    ytPromise = Innertube.create({
-      fetch: (input, init) => tfetch(input, init),
-      cache: new UniversalCache(false),
-      generate_session_locally: true
-    });
+    ytPromise = (async () => {
+      const location = await detectRegion();
+      const lang = (navigator.language || 'en').split('-')[0];
+      const cookie = localStorage.getItem('kanade.cookie') || undefined;
+      const yt = await Innertube.create({
+        fetch: (input, init) => tfetch(input, init),
+        cache: new UniversalCache(false),
+        generate_session_locally: true,
+        location,
+        lang,
+        cookie
+      });
+      // Attach OAuth credentials if the user signed in with Google.
+      const creds = loadCreds();
+      if (creds) {
+        try {
+          yt.session.on('update-credentials', ({ credentials }) => saveCreds(credentials));
+          await yt.session.signIn(creds);
+        } catch { saveCreds(null); /* stale token -> anonymous session */ }
+      }
+      return yt;
+    })();
   }
   return ytPromise;
+}
+
+// Re-create the session (after sign-in/out or region change).
+export function reinit() { ytPromise = null; return getYT(); }
+export function isSignedIn() { return !!loadCreds() || !!localStorage.getItem('kanade.cookie'); }
+export function setCookie(c) {
+  if (c) localStorage.setItem('kanade.cookie', String(c).trim());
+  else localStorage.removeItem('kanade.cookie');
+  return reinit();
 }
 
 const PLAYABLE = /^[A-Za-z0-9_-]{11}$/;
@@ -24,16 +70,25 @@ function textOf(t) {
   try { return t.toString(); } catch { return ''; }
 }
 
+// Upgrade tiny API thumbnails to crisp sizes (googleusercontent/ggpht support size params).
+function upThumb(url) {
+  if (!url) return url;
+  if (/googleusercontent\.com|ggpht\.com/.test(url)) {
+    return url.replace(/=w\d+-h\d+[^ ]*$/, '=w544-h544-l90-rj').replace(/=s\d+[^ ]*$/, '=s544');
+  }
+  return url;
+}
+
 function thumbOf(item) {
   let t = item?.thumbnail ?? item?.thumbnails ?? null;
   if (t && Array.isArray(t.contents)) t = t.contents;
   if (t && !Array.isArray(t) && Array.isArray(t.thumbnails)) t = t.thumbnails;
   if (!t) return null;
-  if (!Array.isArray(t)) return typeof t.url === 'string' ? t.url : null;
+  if (!Array.isArray(t)) return typeof t.url === 'string' ? upThumb(t.url) : null;
   if (!t.length) return null;
   let best = t[0];
   for (const x of t) if ((x?.width || 0) > (best?.width || 0)) best = x;
-  return best?.url ?? null;
+  return upThumb(best?.url ?? null);
 }
 
 function normItem(item) {
@@ -48,21 +103,20 @@ function normItem(item) {
   else if (typeof item.author === 'string') artist = item.author;
   else artist = textOf(item.subtitle);
   const duration = item.duration?.text ?? (typeof item.duration === 'string' ? item.duration : '') ?? '';
+  const playable = PLAYABLE.test(id);
   return {
     id, title,
     artist: artist || '',
     duration: duration || '',
     thumb: thumbOf(item),
-    type: item.item_type ?? (PLAYABLE.test(id) ? 'song' : 'other'),
-    playable: PLAYABLE.test(id)
+    type: item.item_type ?? (playable ? 'song' : 'other'),
+    playable
   };
 }
 
-export async function home() {
-  const yt = await getYT();
-  const feed = await yt.music.getHomeFeed();
+function collectSections(feedSections) {
   const sections = [];
-  for (const s of feed?.sections ?? []) {
+  for (const s of feedSections ?? []) {
     const title = textOf(s?.header?.title) || textOf(s?.title) || 'For you';
     const items = [];
     for (const raw of s?.contents ?? []) {
@@ -78,10 +132,25 @@ export async function home() {
   return sections;
 }
 
+export async function home() {
+  const yt = await getYT();
+  const feed = await yt.music.getHomeFeed();
+  let sections = collectSections(feed?.sections);
+  // pull one continuation for a richer feed
+  try {
+    if (feed?.has_continuation) {
+      const more = await feed.getContinuation();
+      sections = sections.concat(collectSections(more?.sections));
+    }
+  } catch { /* fine */ }
+  return sections;
+}
+
 export async function search(q) {
   const yt = await getYT();
   const out = [];
   const seen = new Set();
+  let lastErr = null;
   for (const type of ['song', 'video']) {
     try {
       const res = await yt.music.search(q, { type });
@@ -91,8 +160,19 @@ export async function search(q) {
           if (it && it.playable && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
         }
       }
-    } catch { /* one type failing is fine */ }
+    } catch (e) { lastErr = e; }
   }
+  if (!out.length) {
+    // fallback: general YouTube search restricted to videos
+    try {
+      const res = await yt.search(q, { type: 'video' });
+      for (const raw of res?.videos ?? []) {
+        const it = normItem(raw);
+        if (it && it.playable && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+      }
+    } catch (e) { lastErr = e; }
+  }
+  if (!out.length && lastErr) throw lastErr;
   return out;
 }
 
@@ -124,8 +204,23 @@ export async function expand(id) {
   return out;
 }
 
-// Playback-client fallback chain — clients returning direct URLs first,
-// local player-JS deciphering as last resort.
+// Signed-in library: playlists, albums, liked songs entry.
+export async function library() {
+  const yt = await getYT();
+  const out = [];
+  try {
+    const lib = await yt.music.getLibrary();
+    for (const s of lib?.contents ?? []) {
+      for (const raw of s?.contents ?? []) {
+        const it = normItem(raw);
+        if (it) out.push(it);
+      }
+    }
+  } catch { /* not signed in or shape change */ }
+  return out;
+}
+
+// Playback-client fallback chain — direct-URL clients first, deciphering last.
 const CLIENTS = ['IOS', 'ANDROID', 'TV_EMBEDDED', 'WEB'];
 
 export async function stream(id) {
@@ -167,7 +262,7 @@ export async function lyrics({ id, title, artist, durationSec }) {
   try {
     const params = new URLSearchParams({ track_name: clean(title), artist_name: clean(artist) });
     const res = await tfetch('https://lrclib.net/api/search?' + params, {
-      headers: { 'User-Agent': 'KanadeTune/0.2 (https://github.com/cognitiveshadows03)' }
+      headers: { 'User-Agent': 'KanadeTune/0.3 (https://github.com/cognitiveshadows03/KanadeTune)' }
     });
     if (res.ok) {
       const arr = await res.json();
