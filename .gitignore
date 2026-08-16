@@ -1,0 +1,8 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+www/bundle.js
+.preview/bundle.js
+.preview/app.entry.js
+.test/
+*.log

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "KanadeTune",
+  "version": "0.2.0",
+  "identifier": "dev.cognitiveshadows.kanadetune",
+  "build": {
+    "frontendDist": "../www",
+    "beforeBuildCommand": "npm run bundle"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "KanadeTune",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 880,
+        "minHeight": 600,
+        "backgroundColor": "#0f1013"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' blob: data: https:; media-src 'self' blob: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost https:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
