@@ -25,35 +25,57 @@ async function detectRegion() {
   return 'US';
 }
 
+// TWO sessions:
+// - anonymous: streams, search, up-next, lyrics. Player endpoints 400 when
+//   called with TV-OAuth Bearer tokens, so auth must never touch them.
+// - authed: home feed + library personalization only, with automatic
+//   fallback to anonymous if a call fails.
+let authPromise = null;
+
+function baseOptions(location, lang) {
+  return {
+    fetch: (input, init) => tfetch(input, init),
+    cache: new UniversalCache(false),
+    location,
+    lang
+  };
+}
+
 function getYT() {
   if (!ytPromise) {
     ytPromise = (async () => {
       const location = await detectRegion();
       const lang = (navigator.language || 'en').split('-')[0];
-      const cookie = localStorage.getItem('kanade.cookie') || undefined;
-      const yt = await Innertube.create({
-        fetch: (input, init) => tfetch(input, init),
-        cache: new UniversalCache(false),
-        location,
-        lang,
-        cookie
-      });
-      // Attach OAuth credentials if the user signed in with Google.
-      const creds = loadCreds();
-      if (creds) {
-        try {
-          yt.session.on('update-credentials', ({ credentials }) => saveCreds(credentials));
-          await yt.session.signIn(creds);
-        } catch { saveCreds(null); /* stale token -> anonymous session */ }
-      }
-      return yt;
+      return Innertube.create(baseOptions(location, lang));
     })();
   }
   return ytPromise;
 }
 
-// Re-create the session (after sign-in/out or region change).
-export function reinit() { ytPromise = null; return getYT(); }
+// Authenticated session (or null if not signed in / sign-in stale).
+function getAuthYT() {
+  const creds = loadCreds();
+  if (!creds) return Promise.resolve(null);
+  if (!authPromise) {
+    authPromise = (async () => {
+      try {
+        const location = await detectRegion();
+        const lang = (navigator.language || 'en').split('-')[0];
+        const yt = await Innertube.create(baseOptions(location, lang));
+        yt.session.on('update-credentials', ({ credentials }) => saveCreds(credentials));
+        await yt.session.signIn(creds);
+        return yt;
+      } catch (e) {
+        dlog('auth session failed, falling back to anonymous:', String(e?.message || e).slice(0, 80));
+        return null;
+      }
+    })();
+  }
+  return authPromise;
+}
+
+// Re-create the sessions (after sign-in/out or region change).
+export function reinit() { ytPromise = null; authPromise = null; return getYT(); }
 export function isSignedIn() { return !!loadCreds() || !!localStorage.getItem('kanade.cookie'); }
 export function setCookie(c) {
   if (c) localStorage.setItem('kanade.cookie', String(c).trim());
@@ -133,7 +155,17 @@ function collectSections(feedSections) {
 }
 
 export async function home() {
-  const yt = await getYT();
+  // Personalized feed when signed in; anonymous otherwise. Falls back to
+  // anonymous automatically if the authed call breaks.
+  const authed = await getAuthYT();
+  if (authed) {
+    try { return homeWith(authed); }
+    catch (e) { dlog('authed home failed, falling back:', String(e?.message || e).slice(0, 80)); }
+  }
+  return homeWith(await getYT());
+}
+
+async function homeWith(yt) {
   const feed = await yt.music.getHomeFeed();
   let sections = collectSections(feed?.sections);
   // pull one continuation for a richer feed
@@ -206,7 +238,7 @@ export async function expand(id) {
 
 // Signed-in library: playlists, albums, liked songs entry.
 export async function library() {
-  const yt = await getYT();
+  const yt = (await getAuthYT()) || (await getYT());
   const out = [];
   try {
     const lib = await yt.music.getLibrary();
@@ -259,19 +291,14 @@ export function markAacBroken() {
   dlog('codec: AAC marked broken on this machine — Opus only from now on');
 }
 
-// Pick the best PLAYABLE audio format: opus preferred (universal software
-// decode), AAC only when the platform can actually decode it. Prefer formats
-// that already carry a direct URL (no PoToken/decipher issues).
+// Pick the best audio format. Opus preferred (universal software decode).
+// AAC is ALWAYS acceptable now: natively when the platform decodes it, else
+// via the Rust AAC->WAV transcoder (needsTranscode flag on the result).
 function pickFormat(info, sup) {
   const fmts = (info.streaming_data?.adaptive_formats || [])
-    .filter(f => (f.mime_type || '').startsWith('audio/'));
-  const playable = fmts.filter(f => {
-    const m = f.mime_type || '';
-    if (/opus/i.test(m)) return sup.opus;
-    if (/mp4a/i.test(m)) return sup.aac;
-    return false;
-  });
-  playable.sort((a, b) => {
+    .filter(f => (f.mime_type || '').startsWith('audio/'))
+    .filter(f => /opus|mp4a/i.test(f.mime_type || ''));
+  fmts.sort((a, b) => {
     const ad = a.url ? 1 : 0, bd = b.url ? 1 : 0;
     if (ad !== bd) return bd - ad;               // direct URL first
     const ao = /opus/i.test(a.mime_type) ? 1 : 0;
@@ -279,7 +306,10 @@ function pickFormat(info, sup) {
     if (ao !== bo) return bo - ao;               // opus next
     return (b.bitrate || 0) - (a.bitrate || 0);  // then bitrate
   });
-  return playable[0] || null;
+  const f = fmts[0];
+  if (!f) return null;
+  const isAac = /mp4a/i.test(f.mime_type || '');
+  return { fmt: f, needsTranscode: isAac && !sup.aac };
 }
 
 export async function stream(id) {
@@ -293,8 +323,9 @@ export async function stream(id) {
       const nAudio = (info.streaming_data?.adaptive_formats || [])
         .filter(f => (f.mime_type || '').startsWith('audio/')).length;
       dlog('stream:', name, 'playability:', ps, '| audio formats:', nAudio);
-      const fmt = pickFormat(info, sup);
-      if (!fmt) { lastErr = new Error(`no playable format on ${name} (aac:${sup.aac} opus:${sup.opus})`); continue; }
+      const picked = pickFormat(info, sup);
+      if (!picked) { lastErr = new Error(`no audio format on ${name}`); continue; }
+      const { fmt, needsTranscode } = picked;
       let url = fmt.url;
       if (!url && typeof fmt.decipher === 'function') {
         // decipher() is async in youtubei.js v18+
@@ -302,7 +333,7 @@ export async function stream(id) {
         catch (e) { dlog('stream:', name, 'decipher failed:', String(e?.message || e)); }
       }
       if (typeof url === 'string' && url.startsWith('http')) {
-        dlog('stream: SELECTED', name, fmt.mime_type, Math.round((fmt.bitrate || 0) / 1000) + 'kbps');
+        dlog('stream: SELECTED', name, fmt.mime_type, Math.round((fmt.bitrate || 0) / 1000) + 'kbps', needsTranscode ? '(will transcode AAC->WAV)' : '');
         return {
           url,
           ua,
@@ -310,7 +341,8 @@ export async function stream(id) {
           bitrate: fmt.bitrate || 0,
           durationSec: info.basic_info?.duration ?? null,
           client: name,
-          codecs: sup
+          codecs: sup,
+          needsTranscode
         };
       }
     } catch (e) {
