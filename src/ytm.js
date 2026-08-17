@@ -5,6 +5,7 @@
 import { Innertube, UniversalCache } from 'youtubei.js/web';
 import { tauriFetch as tfetch } from './tfetch.js';
 import { loadCreds, saveCreds } from './auth.js';
+import { dlog } from './debuglog.js';
 
 let ytPromise = null;
 
@@ -233,21 +234,29 @@ const CLIENTS = [
   { name: 'ANDROID', ua: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US; SM-S928B) gzip' }
 ];
 
-// Codec support probe: WebView2 decodes AAC via Windows Media Foundation,
-// which is MISSING on N editions / some old builds -> SRC_NOT_SUPPORTED.
-// Opus is decoded by Chromium itself (software), so it works everywhere.
+// Codec support: canPlayType LIES about AAC on machines without Media
+// Foundation (answers "maybe" from container knowledge, then decode fails
+// with SRC_NOT_SUPPORTED). So: Opus is always preferred and assumed OK
+// (Chromium software decode); AAC is allowed only until it proves broken —
+// app.js calls markAacBroken() on an AAC SRC_NOT_SUPPORTED failure and the
+// flag persists for this machine.
 let _codecSup = null;
 export function codecSupport() {
   if (_codecSup) return _codecSup;
+  const aacBroken = localStorage.getItem('kanade.aacBroken') === '1';
+  let aacClaimed = true;
   try {
     const a = typeof Audio !== 'undefined' ? new Audio() : null;
-    if (!a) return (_codecSup = { aac: true, opus: true });
-    _codecSup = {
-      aac: !!a.canPlayType('audio/mp4; codecs="mp4a.40.2"'),
-      opus: !!a.canPlayType('audio/webm; codecs="opus"')
-    };
-  } catch { _codecSup = { aac: true, opus: true }; }
+    if (a) aacClaimed = !!a.canPlayType('audio/mp4; codecs="mp4a.40.2"');
+  } catch { /* assume claimed */ }
+  _codecSup = { aac: aacClaimed && !aacBroken, opus: true, aacBroken };
   return _codecSup;
+}
+
+export function markAacBroken() {
+  localStorage.setItem('kanade.aacBroken', '1');
+  _codecSup = null;
+  dlog('codec: AAC marked broken on this machine — Opus only from now on');
 }
 
 // Pick the best PLAYABLE audio format: opus preferred (universal software
@@ -280,14 +289,20 @@ export async function stream(id) {
   for (const { name, ua } of CLIENTS) {
     try {
       const info = await yt.getBasicInfo(id, { client: name });
+      const ps = info.playability_status?.status;
+      const nAudio = (info.streaming_data?.adaptive_formats || [])
+        .filter(f => (f.mime_type || '').startsWith('audio/')).length;
+      dlog('stream:', name, 'playability:', ps, '| audio formats:', nAudio);
       const fmt = pickFormat(info, sup);
       if (!fmt) { lastErr = new Error(`no playable format on ${name} (aac:${sup.aac} opus:${sup.opus})`); continue; }
       let url = fmt.url;
       if (!url && typeof fmt.decipher === 'function') {
         // decipher() is async in youtubei.js v18+
-        try { url = await fmt.decipher(yt.session.player); } catch { /* next client */ }
+        try { url = await fmt.decipher(yt.session.player); }
+        catch (e) { dlog('stream:', name, 'decipher failed:', String(e?.message || e)); }
       }
       if (typeof url === 'string' && url.startsWith('http')) {
+        dlog('stream: SELECTED', name, fmt.mime_type, Math.round((fmt.bitrate || 0) / 1000) + 'kbps');
         return {
           url,
           ua,
@@ -298,7 +313,10 @@ export async function stream(id) {
           codecs: sup
         };
       }
-    } catch (e) { lastErr = e; }
+    } catch (e) {
+      lastErr = e;
+      dlog('stream:', name, 'threw:', String(e?.message || e).slice(0, 100));
+    }
   }
   throw new Error('No playable stream found' + (lastErr ? `: ${lastErr.message}` : ''));
 }
