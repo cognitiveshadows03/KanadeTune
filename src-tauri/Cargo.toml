@@ -1,6 +1,6 @@
 [package]
 name = "kanadetune"
-version = "0.3.2"
+version = "0.3.3"
 description = "KanadeTune — a light, cute desktop player for YouTube Music"
 authors = ["cognitiveshadows"]
 license = "MIT"

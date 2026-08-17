@@ -3,6 +3,7 @@
 import * as ytm from './ytm.js';
 import * as auth from './auth.js';
 import { getArt, hydrateArt, usageBytes, setCapMB, capBytes, clearAll } from './artcache.js';
+import { registerStream } from './streamproxy.js';
 import { openUrl } from './shell.js';
 
 const $ = (s) => document.querySelector(s);
@@ -27,6 +28,7 @@ const state = {
   streamMeta: null
 };
 
+let errorStreak = 0;
 const audio = new Audio();
 audio.preload = 'auto';
 audio.volume = Number(localStorage.getItem('kanade.vol') || 0.8);
@@ -322,7 +324,9 @@ async function playCurrent() {
     state.streamMeta = meta;
     const codec = /opus/i.test(meta.mime) ? 'OPUS' : /mp4a|aac/i.test(meta.mime) ? 'AAC' : (meta.mime.split(';')[0].split('/')[1] || '—').toUpperCase();
     $('#fmtBadge').textContent = `${codec} · ${Math.round((meta.bitrate || 0) / 1000)} kbps`;
-    audio.src = meta.url;
+    // Play through the Rust stream proxy: googlevideo rejects the webview's
+    // own fetch (UA mismatch with the client that issued the URL).
+    audio.src = await registerStream(t.id, meta.url, meta.ua);
     audio.playbackRate = state.speed;
     await audio.play();
     if (my !== playToken) return;
@@ -333,6 +337,11 @@ async function playCurrent() {
   } catch {
     if (my !== playToken) return;
     setPlayIcon();
+    errorStreak++;
+    if (errorStreak >= 3) {
+      toast('Playback keeps failing — stopped. Check Settings → Diagnostics.');
+      return;
+    }
     toast(`Couldn't play "${t.title}" — skipping`);
     next(true);
   }
@@ -376,9 +385,18 @@ function prev() {
 }
 
 audio.addEventListener('ended', () => next());
-audio.addEventListener('play', () => { state.playing = true; setPlayIcon(); });
+audio.addEventListener('play', () => { state.playing = true; errorStreak = 0; setPlayIcon(); });
 audio.addEventListener('pause', () => { state.playing = false; setPlayIcon(); });
-audio.addEventListener('error', () => { if (audio.src) next(true); });
+audio.addEventListener('error', () => {
+  if (!audio.src) return;
+  errorStreak++;
+  if (errorStreak >= 3) {
+    toast('Playback keeps failing — stopped. Check Settings → Diagnostics.');
+    setPlayIcon();
+    return; // brake: don't machine-gun through the whole queue
+  }
+  next(true);
+});
 
 function setMediaSession(t) {
   if (!('mediaSession' in navigator)) return;
