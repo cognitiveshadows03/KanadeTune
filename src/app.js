@@ -6,6 +6,7 @@ import { getArt, hydrateArt, usageBytes, setCapMB, capBytes, clearAll } from './
 import { registerStream } from './streamproxy.js';
 import { tauriFetch } from './tfetch.js';
 import { dlog, getLog } from './debuglog.js';
+import { WavEngine } from './wavplayer.js';
 import { openUrl } from './shell.js';
 
 const $ = (s) => document.querySelector(s);
@@ -35,6 +36,30 @@ let attempting = false;
 const audio = new Audio();
 audio.preload = 'auto';
 audio.volume = Number(localStorage.getItem('kanade.vol') || 0.8);
+
+// Web Audio fallback engine — used when the OS media pipeline is broken
+// (some Win10 N / ancient builds: <audio> throws SRC_NOT_SUPPORTED for ALL
+// formats). Plays WAV from the Rust transcoder without touching OS codecs.
+const wav = new WavEngine();
+wav.volume = audio.volume;
+
+// Unified player facade: delegates to whichever engine owns playback.
+const P = {
+  get cur() { return wav.active ? wav.currentTime : (audio.currentTime || 0); },
+  get dur() { return wav.active ? wav.duration : (audio.duration || 0); },
+  get paused() { return wav.active ? wav.paused : audio.paused; },
+  play() {
+    if (wav.active) { wav.play(); state.playing = true; setPlayIcon(); }
+    else audio.play();
+  },
+  pause() {
+    if (wav.active) { wav.pause(); state.playing = false; setPlayIcon(); }
+    else audio.pause();
+  },
+  seek(t) { if (wav.active) wav.seek(t); else audio.currentTime = t; },
+  setVolume(v) { audio.volume = v; wav.volume = v; },
+  setRate(r) { audio.playbackRate = r; wav.playbackRate = r; }
+};
 
 /* ---------- helpers ---------- */
 const fmtTime = (s) => {
@@ -339,33 +364,60 @@ async function playCurrent() {
     }
     const proxyUrl = await registerStream(t.id, meta.url, meta.ua, !!meta.needsTranscode);
     dlog('play: proxy url =', proxyUrl, meta.needsTranscode ? '(transcode)' : '');
-    try {
-      // Transcoding downloads + decodes the full track first — allow longer.
-      await playSrc(proxyUrl, my, meta.needsTranscode ? 60000 : 20000);
-      dlog('play: PROXY OK');
-    } catch (e1) {
+
+    if (meta.needsTranscode && ytm.codecSupport().mediaBroken) {
+      // Media element is dead on this machine: play WAV via Web Audio.
+      dlog('play: using Web Audio engine (media element broken)');
+      audio.pause(); audio.removeAttribute('src');
+      wav.active = true;
+      wav.onended = () => { state.playing = false; next(); };
+      await wav.load(proxyUrl);
       if (my !== playToken) return;
-      dlog('play: proxy failed:', mediaErr(), String(e1?.message || e1));
-      if (meta.needsTranscode) throw e1; // direct URL would be AAC again — pointless
-      dlog('play: trying direct URL');
+      wav.seek(0);
+      wav.play();
+      state.playing = true;
+      setPlayIcon();
+      dlog('play: WEB AUDIO OK, duration', Math.round(wav.duration) + 's');
+    } else {
+      wav.active = false; wav.pause();
       try {
-        // Attempt 2: direct googlevideo URL (works in some environments).
-        await playSrc(meta.url, my);
-        dlog('play: DIRECT OK');
-      } catch (e2) {
-        // Self-healing: if a native AAC stream hit a format error, this
-        // machine cannot decode AAC (canPlayType lied). Blacklist AAC and
-        // retry the SAME track — it will then transcode (or pick Opus).
-        const formatErr = /SRC_NOT_SUPPORTED|Format error/i.test(String(e2?.message || '') + mediaErr());
-        const wasAac = /mp4a|mp4/i.test(meta.mime);
-        const notYetMarked = !ytm.codecSupport().aacBroken;
-        if (formatErr && wasAac && notYetMarked && my === playToken) {
-          ytm.markAacBroken();
-          toast('Adjusting audio format for this PC…');
-          dlog('play: retrying same track with AAC blacklisted');
+        // Transcoding downloads + decodes the full track first — allow longer.
+        await playSrc(proxyUrl, my, meta.needsTranscode ? 60000 : 20000);
+        dlog('play: PROXY OK');
+      } catch (e1) {
+        if (my !== playToken) return;
+        dlog('play: proxy failed:', mediaErr(), String(e1?.message || e1));
+        const formatErr1 = /SRC_NOT_SUPPORTED|Format error/i.test(String(e1?.message || '') + mediaErr());
+        const wasOpus = /opus|webm/i.test(meta.mime);
+        if (formatErr1 && wasOpus && !ytm.codecSupport().mediaBroken && my === playToken) {
+          // Opus is decoded by Chromium itself; if even Opus won't play, the
+          // media pipeline is broken -> switch to transcode + Web Audio.
+          ytm.markMediaBroken();
+          toast('Switching to compatibility audio engine…');
+          dlog('play: media element broken (opus failed) — retrying via Web Audio path');
           return playCurrent();
         }
-        throw e2;
+        if (meta.needsTranscode) throw e1; // direct URL would be AAC again — pointless
+        dlog('play: trying direct URL');
+        try {
+          // Attempt 2: direct googlevideo URL (works in some environments).
+          await playSrc(meta.url, my);
+          dlog('play: DIRECT OK');
+        } catch (e2) {
+          // Self-healing: if a native AAC stream hit a format error, this
+          // machine cannot decode AAC (canPlayType lied). Blacklist AAC and
+          // retry the SAME track — it will then transcode (or pick Opus).
+          const formatErr = /SRC_NOT_SUPPORTED|Format error/i.test(String(e2?.message || '') + mediaErr());
+          const wasAac = /mp4a|mp4/i.test(meta.mime);
+          const notYetMarked = !ytm.codecSupport().aacBroken;
+          if (formatErr && wasAac && notYetMarked && my === playToken) {
+            ytm.markAacBroken();
+            toast('Adjusting audio format for this PC…');
+            dlog('play: retrying same track with AAC blacklisted');
+            return playCurrent();
+          }
+          throw e2;
+        }
       }
     }
     if (my !== playToken) return;
@@ -441,17 +493,17 @@ function setPlayIcon(mode) {
 }
 
 function togglePlay() {
-  if (!audio.src) return;
-  if (audio.paused) audio.play(); else audio.pause();
+  if (!audio.src && !wav.active) return;
+  if (P.paused) P.play(); else P.pause();
 }
 
 function next(fromError) {
-  if (state.repeat === 2 && !fromError) { audio.currentTime = 0; audio.play(); return; }
+  if (state.repeat === 2 && !fromError) { P.seek(0); P.play(); return; }
   if (state.index < state.queue.length - 1) { state.index++; playCurrent(); }
   else if (state.repeat === 1 && state.queue.length) { state.index = 0; playCurrent(); }
 }
 function prev() {
-  if (audio.currentTime > 4) { audio.currentTime = 0; return; }
+  if (P.cur > 4) { P.seek(0); return; }
   if (state.index > 0) { state.index--; playCurrent(); }
 }
 
@@ -513,7 +565,7 @@ const SPEEDS = [1, 1.25, 1.5, 2, 0.75];
 $('#btnSpeed').addEventListener('click', () => {
   const i = (SPEEDS.indexOf(state.speed) + 1) % SPEEDS.length;
   state.speed = SPEEDS[i];
-  audio.playbackRate = state.speed;
+  P.setRate(state.speed);
   $('#btnSpeed').textContent = state.speed.toFixed(2).replace(/0+$/, '').replace(/\.$/, '.0') + '×';
 });
 
@@ -535,8 +587,8 @@ const seekFill = $('#seekFill'), seekThumb = $('#seekThumb'), miniFill = $('#min
 let lastSec = -1, lastLyricIdx = -1;
 
 function frame() {
-  const dur = audio.duration || 0;
-  const pos = state.seeking ? state.seekPos : (audio.currentTime || 0);
+  const dur = P.dur || 0;
+  const pos = state.seeking ? state.seekPos : (P.cur || 0);
   const p = dur ? Math.min(pos / dur, 1) : 0;
   seekFill.style.transform = `scaleX(${p})`;
   miniFill.style.transform = `scaleX(${p})`;
@@ -547,7 +599,7 @@ function frame() {
     $('#tCur').textContent = fmtTime(pos);
     $('#tTot').textContent = fmtTime(dur);
     if (state.sleepAt && Date.now() > state.sleepAt) {
-      audio.pause();
+      P.pause();
       state.sleepAt = null; sleepIdx = 0;
       $('#btnSleep').textContent = 'Sleep';
       $('#btnSleep').classList.remove('on');
@@ -563,24 +615,24 @@ requestAnimationFrame(frame);
 const seekWrap = $('#seekWrap');
 function seekFrom(e) {
   const r = $('#seekBar').getBoundingClientRect();
-  state.seekPos = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1) * (audio.duration || 0);
+  state.seekPos = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1) * (P.dur || 0);
 }
 seekWrap.addEventListener('pointerdown', (e) => {
-  if (!audio.duration) return;
+  if (!P.dur) return;
   state.seeking = true; seekFrom(e);
   seekWrap.setPointerCapture(e.pointerId);
 });
 seekWrap.addEventListener('pointermove', (e) => { if (state.seeking) seekFrom(e); });
 seekWrap.addEventListener('pointerup', () => {
   if (!state.seeking) return;
-  audio.currentTime = state.seekPos || 0;
+  P.seek(state.seekPos || 0);
   state.seeking = false;
 });
 
 $('#vol').value = Math.round(audio.volume * 100);
 $('#vol').addEventListener('input', (e) => {
-  audio.volume = e.target.value / 100;
-  if ($('#rememberVol').checked) localStorage.setItem('kanade.vol', audio.volume);
+  P.setVolume(e.target.value / 100);
+  if ($('#rememberVol').checked) localStorage.setItem('kanade.vol', String(e.target.value / 100));
 });
 
 /* ---------- player open/close ---------- */
@@ -663,7 +715,7 @@ async function loadLyrics(t, meta) {
         `<div class="lyNone" style="padding-top:16px">Lyrics: ${esc(res.source)}</div>`;
       $('#lyricsScroll').onclick = (e) => {
         const ln = e.target.closest('.lyLine');
-        if (ln) audio.currentTime = +ln.dataset.t;
+        if (ln) P.seek(+ln.dataset.t);
       };
     } else if (res.plain) {
       state.lyrics = { plain: res.plain };

@@ -268,21 +268,26 @@ const CLIENTS = [
 ];
 
 // Codec support: canPlayType LIES about AAC on machines without Media
-// Foundation (answers "maybe" from container knowledge, then decode fails
-// with SRC_NOT_SUPPORTED). So: Opus is always preferred and assumed OK
-// (Chromium software decode); AAC is allowed only until it proves broken —
-// app.js calls markAacBroken() on an AAC SRC_NOT_SUPPORTED failure and the
-// flag persists for this machine.
+// Foundation. Worse: on some systems (Win10 N / very old builds) the HTML
+// media element can't play ANYTHING (even Opus/WebM -> SRC_NOT_SUPPORTED)
+// because WebView2's media pipeline won't initialize. markMediaBroken()
+// switches the app to: pick AAC -> Rust transcodes to WAV -> Web Audio plays.
 let _codecSup = null;
 export function codecSupport() {
   if (_codecSup) return _codecSup;
   const aacBroken = localStorage.getItem('kanade.aacBroken') === '1';
+  const mediaBroken = localStorage.getItem('kanade.mediaBroken') === '1';
   let aacClaimed = true;
   try {
     const a = typeof Audio !== 'undefined' ? new Audio() : null;
     if (a) aacClaimed = !!a.canPlayType('audio/mp4; codecs="mp4a.40.2"');
   } catch { /* assume claimed */ }
-  _codecSup = { aac: aacClaimed && !aacBroken, opus: true, aacBroken };
+  _codecSup = {
+    aac: !mediaBroken && aacClaimed && !aacBroken,
+    opus: !mediaBroken,
+    aacBroken,
+    mediaBroken
+  };
   return _codecSup;
 }
 
@@ -292,22 +297,34 @@ export function markAacBroken() {
   dlog('codec: AAC marked broken on this machine — Opus only from now on');
 }
 
-// Pick the best audio format. Opus preferred (universal software decode).
-// AAC is ALWAYS acceptable now: natively when the platform decodes it, else
-// via the Rust AAC->WAV transcoder (needsTranscode flag on the result).
+export function markMediaBroken() {
+  localStorage.setItem('kanade.mediaBroken', '1');
+  _codecSup = null;
+  dlog('codec: MEDIA ELEMENT marked broken — switching to AAC->WAV + Web Audio engine');
+}
+
+// Pick the best audio format. When the media element works: Opus preferred,
+// AAC natively or transcoded. When mediaBroken: ONLY AAC is usable (the Rust
+// transcoder decodes AAC; the result plays via Web Audio), so prefer mp4a.
 function pickFormat(info, sup) {
   const fmts = (info.streaming_data?.adaptive_formats || [])
     .filter(f => (f.mime_type || '').startsWith('audio/'))
     .filter(f => /opus|mp4a/i.test(f.mime_type || ''));
+  const preferOpus = sup.opus; // media element healthy -> opus first
   fmts.sort((a, b) => {
     const ad = a.url ? 1 : 0, bd = b.url ? 1 : 0;
     if (ad !== bd) return bd - ad;               // direct URL first
     const ao = /opus/i.test(a.mime_type) ? 1 : 0;
     const bo = /opus/i.test(b.mime_type) ? 1 : 0;
-    if (ao !== bo) return bo - ao;               // opus next
+    if (ao !== bo) return preferOpus ? bo - ao : ao - bo;
     return (b.bitrate || 0) - (a.bitrate || 0);  // then bitrate
   });
-  const f = fmts[0];
+  let f = fmts[0];
+  if (sup.mediaBroken) {
+    f = fmts.find(x => /mp4a/i.test(x.mime_type || '')) || null; // must be AAC
+    if (!f) return null;
+    return { fmt: f, needsTranscode: true };
+  }
   if (!f) return null;
   const isAac = /mp4a/i.test(f.mime_type || '');
   return { fmt: f, needsTranscode: isAac && !sup.aac };

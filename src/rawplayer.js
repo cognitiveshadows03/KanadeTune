@@ -102,10 +102,14 @@ async function callPlayer(videoId, rc, { gl, hl, visitorData }) {
 }
 
 function bestAudio(streamingData, sup) {
-  const fmts = (streamingData?.adaptiveFormats || [])
+  let fmts = (streamingData?.adaptiveFormats || [])
     .filter(f => (f.mimeType || '').startsWith('audio/'))
     .filter(f => /opus|mp4a/i.test(f.mimeType || ''))
     .filter(f => f.url); // raw path: only direct URLs (no cipher solving here)
+  if (sup.mediaBroken) {
+    // media element dead -> only AAC works (via Rust transcoder + Web Audio)
+    fmts = fmts.filter(f => /mp4a/i.test(f.mimeType || ''));
+  }
   fmts.sort((a, b) => {
     const ao = /opus/i.test(a.mimeType) ? 1 : 0;
     const bo = /opus/i.test(b.mimeType) ? 1 : 0;
@@ -128,7 +132,8 @@ export async function rawStream(videoId, sup, locale) {
       const fmt = bestAudio(data.streamingData, sup);
       if (!fmt) continue;
       const isAac = /mp4a/i.test(fmt.mimeType || '');
-      dlog('raw: SELECTED', rc.label, fmt.mimeType, Math.round((fmt.bitrate || 0) / 1000) + 'kbps');
+      const needsTranscode = sup.mediaBroken ? true : (isAac && !sup.aac);
+      dlog('raw: SELECTED', rc.label, fmt.mimeType, Math.round((fmt.bitrate || 0) / 1000) + 'kbps', needsTranscode ? '(transcode)' : '');
       return {
         url: fmt.url,
         ua: rc.ua,
@@ -137,7 +142,7 @@ export async function rawStream(videoId, sup, locale) {
         durationSec: Number(data?.videoDetails?.lengthSeconds) || null,
         client: rc.label,
         codecs: sup,
-        needsTranscode: isAac && !sup.aac
+        needsTranscode
       };
     } catch (e) {
       dlog('raw:', rc.label, 'threw:', String(e?.message || e).slice(0, 80));
