@@ -1,12 +1,15 @@
 // KanadeTune — Tauri 2 shell.
-// HTTP for the InnerTube layer is implemented HERE as a custom command using
-// reqwest, because tauri-plugin-http mangled Request headers/bodies from
-// youtubei.js (silent drops -> YouTube 403). With our own command we control
-// every byte: method, headers, body, redirects.
+// Two Rust-owned network paths (tauri-plugin-http proved unreliable):
+//  1) http_request command — byte-exact HTTP for the InnerTube layer (reqwest).
+//  2) `stream` URI scheme — proxies googlevideo audio with the User-Agent of
+//     the InnerTube client that issued the URL. The WebView's <audio> element
+//     otherwise fetches with an Edge fingerprint, which googlevideo rejects
+//     (403) because it does not match the client that requested the URL.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -18,6 +21,11 @@ fn client() -> &'static reqwest::Client {
             .build()
             .expect("failed to build http client")
     })
+}
+
+fn streams() -> &'static Mutex<HashMap<String, (String, String)>> {
+    static S: OnceLock<Mutex<HashMap<String, (String, String)>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[derive(serde::Deserialize)]
@@ -45,7 +53,6 @@ async fn http_request(req: HttpReq) -> Result<HttpResp, String> {
 
     let mut r = client().request(method, &req.url);
     for (k, v) in &req.headers {
-        // reqwest rejects some forbidden headers silently; set what we can.
         r = r.header(k.as_str(), v.as_str());
     }
     if let Some(b64) = &req.body_b64 {
@@ -74,12 +81,82 @@ async fn http_request(req: HttpReq) -> Result<HttpResp, String> {
     })
 }
 
+/// Register a stream URL + the User-Agent it must be fetched with.
+/// The webview then plays it via stream://localhost/<id> (macOS/Linux)
+/// or http://stream.localhost/<id> (Windows).
+#[tauri::command]
+fn register_stream(id: String, url: String, ua: String) {
+    streams().lock().unwrap().insert(id, (url, ua));
+}
+
+fn err_response(status: u16) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Vec::new())
+        .unwrap()
+}
+
+async fn proxy_stream(id: String, range: Option<String>) -> tauri::http::Response<Vec<u8>> {
+    let entry = { streams().lock().unwrap().get(&id).cloned() };
+    let Some((url, ua)) = entry else {
+        return err_response(404);
+    };
+
+    let mut req = client().get(&url).header("User-Agent", ua);
+    if let Some(r) = &range {
+        req = req.header("Range", r.clone());
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let mut builder = tauri::http::Response::builder()
+                .status(status)
+                .header("Accept-Ranges", "bytes")
+                .header("Access-Control-Allow-Origin", "*");
+            for key in ["content-type", "content-length", "content-range"] {
+                if let Some(v) = resp.headers().get(key) {
+                    if let Ok(s) = v.to_str() {
+                        builder = builder.header(key, s);
+                    }
+                }
+            }
+            let body = match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(_) => return err_response(502),
+            };
+            builder.body(body).unwrap_or_else(|_| err_response(500))
+        }
+        Err(_) => err_response(502),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![http_request])
+        .invoke_handler(tauri::generate_handler![http_request, register_stream])
+        .register_asynchronous_uri_scheme_protocol("stream", |_ctx, request, responder| {
+            let id = request
+                .uri()
+                .path()
+                .trim_start_matches('/')
+                .split(['?', '#'])
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let range = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            tauri::async_runtime::spawn(async move {
+                let resp = proxy_stream(id, range).await;
+                responder.respond(resp);
+            });
+        })
         .run(tauri::generate_context!())
         .expect("error while running KanadeTune");
 }

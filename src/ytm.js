@@ -221,14 +221,21 @@ export async function library() {
 }
 
 // Playback-client fallback chain — direct-URL clients first, deciphering last.
-const CLIENTS = ['IOS', 'ANDROID', 'TV_EMBEDDED', 'WEB'];
+// Each entry carries the User-Agent googlevideo expects for URLs issued to
+// that client; the audio proxy must fetch with the SAME UA or it gets 403.
+const CLIENTS = [
+  { name: 'IOS', ua: 'com.google.ios.youtube/20.11.6 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; US)' },
+  { name: 'ANDROID', ua: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US; SM-S928B) gzip' },
+  { name: 'TV_EMBEDDED', ua: 'Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' },
+  { name: 'WEB', ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36' }
+];
 
 export async function stream(id) {
   const yt = await getYT();
   let lastErr = null;
-  for (const client of CLIENTS) {
+  for (const { name, ua } of CLIENTS) {
     try {
-      const info = await yt.getBasicInfo(id, { client });
+      const info = await yt.getBasicInfo(id, { client: name });
       const fmt = info.chooseFormat({ type: 'audio', quality: 'best' });
       if (!fmt) continue;
       let url = fmt.url;
@@ -238,10 +245,11 @@ export async function stream(id) {
       if (typeof url === 'string' && url.startsWith('http')) {
         return {
           url,
+          ua,
           mime: fmt.mime_type || '',
           bitrate: fmt.bitrate || 0,
           durationSec: info.basic_info?.duration ?? null,
-          client
+          client: name
         };
       }
     } catch (e) { lastErr = e; }
