@@ -331,22 +331,31 @@ async function playCurrent() {
     $('#fmtBadge').textContent = `${codec} · ${Math.round((meta.bitrate || 0) / 1000)} kbps`;
 
     // Attempt 1: Rust stream proxy (correct client UA, Range support).
-    const proxyUrl = await registerStream(t.id, meta.url, meta.ua);
-    dlog('play: proxy url =', proxyUrl);
+    // needsTranscode => Rust downloads + decodes AAC to WAV (machines
+    // without a Media Foundation AAC decoder).
+    if (meta.needsTranscode) {
+      $('#fmtBadge').textContent = `${codec} → WAV · ${Math.round((meta.bitrate || 0) / 1000)} kbps`;
+      toast('Preparing audio for this PC…');
+    }
+    const proxyUrl = await registerStream(t.id, meta.url, meta.ua, !!meta.needsTranscode);
+    dlog('play: proxy url =', proxyUrl, meta.needsTranscode ? '(transcode)' : '');
     try {
-      await playSrc(proxyUrl, my);
+      // Transcoding downloads + decodes the full track first — allow longer.
+      await playSrc(proxyUrl, my, meta.needsTranscode ? 60000 : 20000);
       dlog('play: PROXY OK');
     } catch (e1) {
       if (my !== playToken) return;
-      dlog('play: proxy failed:', mediaErr(), String(e1?.message || e1), '— trying direct URL');
+      dlog('play: proxy failed:', mediaErr(), String(e1?.message || e1));
+      if (meta.needsTranscode) throw e1; // direct URL would be AAC again — pointless
+      dlog('play: trying direct URL');
       try {
         // Attempt 2: direct googlevideo URL (works in some environments).
         await playSrc(meta.url, my);
         dlog('play: DIRECT OK');
       } catch (e2) {
-        // Self-healing: if an AAC stream hit a format error, this machine
-        // cannot decode AAC (canPlayType lied). Blacklist AAC and retry the
-        // SAME track — the picker will now select Opus.
+        // Self-healing: if a native AAC stream hit a format error, this
+        // machine cannot decode AAC (canPlayType lied). Blacklist AAC and
+        // retry the SAME track — it will then transcode (or pick Opus).
         const formatErr = /SRC_NOT_SUPPORTED|Format error/i.test(String(e2?.message || '') + mediaErr());
         const wasAac = /mp4a|mp4/i.test(meta.mime);
         const notYetMarked = !ytm.codecSupport().aacBroken;
@@ -380,7 +389,7 @@ async function playCurrent() {
 
 // Sets audio.src and resolves when playback actually starts, rejects on the
 // element's error event (with a timeout so we never hang forever).
-function playSrc(src, token) {
+function playSrc(src, token, timeoutMs = 20000) {
   attempting = true;
   return new Promise((resolve, reject) => {
     if (token !== playToken) { attempting = false; return reject(new Error('superseded')); }
@@ -393,7 +402,7 @@ function playSrc(src, token) {
     };
     const ok = () => { if (!done) { done = true; cleanup(); resolve(); } };
     const bad = () => { if (!done) { done = true; cleanup(); reject(new Error('media error: ' + mediaErr())); } };
-    const timer = setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error('timeout waiting for playback')); } }, 20000);
+    const timer = setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error('timeout waiting for playback')); } }, timeoutMs);
     audio.addEventListener('playing', ok, { once: true });
     audio.addEventListener('error', bad, { once: true });
     audio.src = src;
