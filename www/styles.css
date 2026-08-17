@@ -341,3 +341,31 @@ svg { width: 20px; height: 20px; fill: currentColor; display: block; }
   transition: opacity 200ms ease, transform 200ms ease;
 }
 #toast.hidden { opacity: 0; transform: translateX(-50%) translateY(16px); pointer-events: none; }
+
+/* ===== auth modal ===== */
+.modalWrap {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8, 9, 12, 0.72);
+  display: grid; place-items: center;
+}
+.modalWrap.hidden { display: none; }
+.modal {
+  width: min(440px, 92vw);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 22px;
+}
+.modalTitle { font-size: 18px; font-weight: 800; margin-bottom: 10px; }
+.modalText { font-size: 13.5px; color: var(--text2); line-height: 1.55; margin-bottom: 10px; }
+.modalText.dim { font-size: 12.5px; }
+.modalSteps { margin: 0 0 14px 20px; font-size: 13.5px; color: var(--text); line-height: 1.9; }
+.modalSteps b { color: var(--accent); }
+.authCodeBox {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--bg2); border: 1px dashed var(--line); border-radius: var(--r-md);
+  padding: 12px 16px; margin-bottom: 12px;
+}
+.authCodeBox span {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 24px; letter-spacing: 0.18em; color: var(--accent); font-weight: 700;
+}
+.modalBtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }

@@ -4,6 +4,8 @@ import * as ytm from './ytm.js';
 import * as auth from './auth.js';
 import { getArt, hydrateArt, usageBytes, setCapMB, capBytes, clearAll } from './artcache.js';
 import { registerStream } from './streamproxy.js';
+import { tauriFetch } from './tfetch.js';
+import { dlog, getLog } from './debuglog.js';
 import { openUrl } from './shell.js';
 
 const $ = (s) => document.querySelector(s);
@@ -29,6 +31,7 @@ const state = {
 };
 
 let errorStreak = 0;
+let attempting = false;
 const audio = new Audio();
 audio.preload = 'auto';
 audio.volume = Number(localStorage.getItem('kanade.vol') || 0.8);
@@ -319,23 +322,35 @@ async function playCurrent() {
   setNowPlayingUI(t);
   setPlayIcon('load');
   try {
+    dlog('play: resolving stream for', t.id, t.title);
     const meta = await ytm.stream(t.id);
     if (my !== playToken) return;
     state.streamMeta = meta;
+    dlog('play: got stream', meta.client, meta.mime, meta.bitrate, 'url host:', new URL(meta.url).hostname);
     const codec = /opus/i.test(meta.mime) ? 'OPUS' : /mp4a|aac/i.test(meta.mime) ? 'AAC' : (meta.mime.split(';')[0].split('/')[1] || '—').toUpperCase();
     $('#fmtBadge').textContent = `${codec} · ${Math.round((meta.bitrate || 0) / 1000)} kbps`;
-    // Play through the Rust stream proxy: googlevideo rejects the webview's
-    // own fetch (UA mismatch with the client that issued the URL).
-    audio.src = await registerStream(t.id, meta.url, meta.ua);
-    audio.playbackRate = state.speed;
-    await audio.play();
+
+    // Attempt 1: Rust stream proxy (correct client UA, Range support).
+    const proxyUrl = await registerStream(t.id, meta.url, meta.ua);
+    dlog('play: proxy url =', proxyUrl);
+    try {
+      await playSrc(proxyUrl, my);
+      dlog('play: PROXY OK');
+    } catch (e1) {
+      if (my !== playToken) return;
+      dlog('play: proxy failed:', mediaErr(), String(e1?.message || e1), '— trying direct URL');
+      // Attempt 2: direct googlevideo URL (works in some environments).
+      await playSrc(meta.url, my);
+      dlog('play: DIRECT OK');
+    }
     if (my !== playToken) return;
     pushRecent(t);
     pushHistory(t);
     loadLyrics(t, meta);
     setMediaSession(t);
-  } catch {
+  } catch (e) {
     if (my !== playToken) return;
+    dlog('play: FAILED', t.id, mediaErr(), String(e?.message || e));
     setPlayIcon();
     errorStreak++;
     if (errorStreak >= 3) {
@@ -345,6 +360,37 @@ async function playCurrent() {
     toast(`Couldn't play "${t.title}" — skipping`);
     next(true);
   }
+}
+
+// Sets audio.src and resolves when playback actually starts, rejects on the
+// element's error event (with a timeout so we never hang forever).
+function playSrc(src, token) {
+  attempting = true;
+  return new Promise((resolve, reject) => {
+    if (token !== playToken) { attempting = false; return reject(new Error('superseded')); }
+    let done = false;
+    const cleanup = () => {
+      audio.removeEventListener('playing', ok);
+      audio.removeEventListener('error', bad);
+      clearTimeout(timer);
+      attempting = false;
+    };
+    const ok = () => { if (!done) { done = true; cleanup(); resolve(); } };
+    const bad = () => { if (!done) { done = true; cleanup(); reject(new Error('media error: ' + mediaErr())); } };
+    const timer = setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error('timeout waiting for playback')); } }, 20000);
+    audio.addEventListener('playing', ok, { once: true });
+    audio.addEventListener('error', bad, { once: true });
+    audio.src = src;
+    audio.playbackRate = state.speed;
+    audio.play().catch((e) => { if (!done) { done = true; cleanup(); reject(e); } });
+  });
+}
+
+function mediaErr() {
+  const e = audio.error;
+  if (!e) return 'none';
+  const codes = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
+  return `${codes[e.code] || e.code}${e.message ? ' (' + e.message + ')' : ''}`;
 }
 
 function setNowPlayingUI(t) {
@@ -389,6 +435,8 @@ audio.addEventListener('play', () => { state.playing = true; errorStreak = 0; se
 audio.addEventListener('pause', () => { state.playing = false; setPlayIcon(); });
 audio.addEventListener('error', () => {
   if (!audio.src) return;
+  if (attempting) return; // playSrc owns errors during connect/fallback
+  dlog('audio error mid-playback:', mediaErr());
   errorStreak++;
   if (errorStreak >= 3) {
     toast('Playback keeps failing — stopped. Check Settings → Diagnostics.');
@@ -625,30 +673,52 @@ function refreshAccountUI() {
 }
 
 let authInFlight = false;
+let authCancelled = false;
+
 async function startSignIn() {
   if (authInFlight) return;
   authInFlight = true;
-  const codeRow = $('#authCodeRow');
+  authCancelled = false;
+
+  const modal = $('#authModal');
+  modal.classList.remove('hidden');
+  $('#authCode').textContent = '· · · · · ·';
+  $('#authStatus').textContent = 'Getting your code from Google…';
+  let authUrl = 'https://www.google.com/device';
+  $('#btnAuthOpen').onclick = () => openUrl(authUrl);
+
   try {
+    dlog('auth: starting device-code sign-in');
     await auth.signIn(({ url, code }) => {
-      codeRow.style.display = '';
-      $('#authUrl').textContent = url.replace(/^https?:\/\//, '');
+      dlog('auth: code received', code);
+      authUrl = url || authUrl;
       $('#authCode').textContent = code;
-      $('#btnAuthOpen').onclick = () => openUrl(url);
-      openUrl(url);
+      $('#authStatus').textContent = 'Waiting for you to approve in the browser… This screen updates automatically once you tap Allow.';
+      $('#btnCopyCode').onclick = () => { navigator.clipboard?.writeText(code); toast('Code copied'); };
+      openUrl(authUrl);
     });
-    codeRow.style.display = 'none';
+    if (authCancelled) return;
+    dlog('auth: signed in OK');
+    modal.classList.add('hidden');
     await ytm.reinit();
     refreshAccountUI();
-    toast('Signed in! Loading your feed…');
+    toast('Signed in! Loading your personal feed…');
     loadHome();
   } catch (e) {
-    codeRow.style.display = 'none';
-    toast('Sign-in failed: ' + (e?.message || 'unknown error'));
+    dlog('auth: FAILED', String(e?.message || e));
+    if (!authCancelled) {
+      $('#authStatus').textContent = 'Sign-in failed: ' + (e?.message || 'unknown error') + ' — you can close this and try again.';
+      toast('Sign-in failed');
+    }
   } finally {
     authInFlight = false;
   }
 }
+
+$('#btnAuthCancel').addEventListener('click', () => {
+  authCancelled = true;
+  $('#authModal').classList.add('hidden');
+});
 
 $('#btnAuth').addEventListener('click', async () => {
   if (ytm.isSignedIn()) {
@@ -692,13 +762,31 @@ async function refreshCacheUsage() {
 $('#btnDiag').addEventListener('click', async () => {
   const out = $('#diagOut');
   out.textContent = 'Testing…';
+  const r = {};
   try {
     const { probe } = await import('./tfetch.js');
-    const r = await probe();
-    out.textContent = JSON.stringify(r, null, 1);
-  } catch (e) {
-    out.textContent = 'Probe failed: ' + (e?.message || e);
-  }
+    Object.assign(r, await probe());
+  } catch (e) { r.api_probe = 'ERR: ' + (e?.message || e); }
+  // Stream proxy probe: resolve a real stream, register it, fetch through proxy.
+  try {
+    const items = await ytm.search('test audio');
+    const meta = await ytm.stream(items[0].id);
+    r.stream_resolve = meta.client + ' ' + Math.round((meta.bitrate || 0) / 1000) + 'kbps';
+    const purl = await registerStream('diag-probe', meta.url, meta.ua);
+    r.proxy_url = purl;
+    const resp = await fetch(purl, { headers: { Range: 'bytes=0-1023' } });
+    r.proxy_fetch = resp.status + ' ' + (resp.headers.get('content-type') || '');
+    // Also try googlevideo direct from the webview for comparison:
+    try {
+      const d = await fetch(meta.url, { headers: { Range: 'bytes=0-1023' } });
+      r.direct_fetch = d.status;
+    } catch (e) { r.direct_fetch = 'ERR: ' + (e?.message || e).toString().slice(0, 80); }
+  } catch (e) { r.stream_probe = 'ERR: ' + (e?.message || e); }
+  out.textContent = JSON.stringify(r, null, 1);
+});
+
+$('#btnLog').addEventListener('click', () => {
+  $('#debugLogOut').textContent = getLog() || '(log is empty — play a song first)';
 });
 
 /* ---------- about ---------- */

@@ -70,16 +70,9 @@
         <div class="setRow">
           <div>
             <div class="setName" id="accountState">Not signed in</div>
-            <div class="setDesc">Sign in with Google (device code — opens google.com/device) to get your playlists, likes and personal mixes. Tokens stay on this device only.</div>
+            <div class="setDesc">Connect your Google account to get your own playlists, likes and personal mixes. Sign-in data never leaves this device.</div>
           </div>
           <div class="setCtl"><button id="btnAuth" class="btn">Sign in with Google</button></div>
-        </div>
-        <div class="setRow" id="authCodeRow" style="display:none">
-          <div>
-            <div class="setName">Enter this code at <span id="authUrl" class="mono">google.com/device</span></div>
-            <div class="setDesc mono big" id="authCode">—</div>
-          </div>
-          <div class="setCtl"><button id="btnAuthOpen" class="btn">Open page</button></div>
         </div>
       </div>
 
@@ -147,9 +140,16 @@
         <div class="setRow">
           <div>
             <div class="setName">Connection test</div>
-            <div class="setDesc mono" id="diagOut">Run this if the feed or search fails — it shows exactly which step breaks.</div>
+            <div class="setDesc mono" id="diagOut">Run this if the feed, search or playback fails — it tests every step including the audio stream proxy.</div>
           </div>
           <div class="setCtl"><button id="btnDiag" class="btn">Run test</button></div>
+        </div>
+        <div class="setRow">
+          <div style="min-width:0;flex:1">
+            <div class="setName">Debug log</div>
+            <div class="setDesc mono" id="debugLogOut" style="white-space:pre-wrap;max-height:260px;overflow-y:auto">Press a song, then open this to see what happened.</div>
+          </div>
+          <div class="setCtl"><button id="btnLog" class="btn">Show log</button></div>
         </div>
       </div>
     </section>
@@ -160,7 +160,7 @@
         <div class="aboutLogo">♪</div>
         <div>
           <div class="aboutName">KanadeTune</div>
-          <div class="aboutSub" id="aboutVersion">v0.3.3 · MIT License</div>
+          <div class="aboutSub" id="aboutVersion">v0.3.4 · MIT License</div>
           <div class="aboutDesc">A light, cute desktop player for YouTube Music. No backend, no ads — audio streams straight from your machine. 奏でる — to play music.</div>
         </div>
       </div>
@@ -248,6 +248,27 @@
     <div id="sidePane" class="hidden">
       <div id="lyricsPane" class="hidden"><div id="lyricsScroll"></div></div>
       <div id="queuePane" class="hidden"><h2 class="secTitle">Up next</h2><div id="queueList" class="songList"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Google sign-in dialog -->
+<div id="authModal" class="modalWrap hidden">
+  <div class="modal">
+    <div class="modalTitle">Sign in with Google</div>
+    <div id="authStep1">
+      <div class="modalText">KanadeTune signs you in the same way a smart TV does — you approve it from your browser, and the app never sees your password.</div>
+      <ol class="modalSteps">
+        <li>We'll open <b>google.com/device</b> in your browser</li>
+        <li>Enter the code shown below</li>
+        <li>Choose your Google account and tap <b>Allow</b></li>
+      </ol>
+      <div class="authCodeBox"><span id="authCode">· · · · · ·</span><button id="btnCopyCode" class="btn sm">Copy</button></div>
+      <div class="modalText dim" id="authStatus">Getting your code from Google…</div>
+    </div>
+    <div class="modalBtns">
+      <button id="btnAuthOpen" class="btn">Open google.com/device</button>
+      <button id="btnAuthCancel" class="btn danger">Cancel</button>
     </div>
   </div>
 </div>
