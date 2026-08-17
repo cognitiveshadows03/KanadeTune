@@ -50,9 +50,15 @@ CI: pushing to `main` runs the GitHub Actions workflow which produces the Window
 
 - **Lead Developer:** [cognitiveshadows](https://github.com/cognitiveshadows03)
 
-## 🙏 Inspired by
+## 🙏 Acknowledgments
 
-- [**ArchiveTune**](https://github.com/rukamori/ArchiveTune) — the design language and spirit of KanadeTune are directly inspired by it. Go give it a ⭐!
+KanadeTune stands on the shoulders of excellent open-source projects:
+
+- [**ArchiveTune**](https://github.com/rukamori/ArchiveTune) by rukamori & contributors — the design language, lyrics-first philosophy and overall spirit of KanadeTune are directly inspired by it. Go give it a ⭐!
+- [**Metrolist**](https://github.com/mostafaalagamy/Metrolist) by mostafaalagamy & contributors — our stream-source strategy (InnerTube playback client definitions, device contexts and priority order in `src/rawplayer.js`) is adapted from Metrolist's battle-tested client work
+- [**youtubei.js**](https://github.com/LuanRT/YouTube.js) by LuanRT — the InnerTube library powering browse, search and lyrics
+- [**LRCLIB**](https://lrclib.net) — free synced-lyrics API
+- [**Symphonia**](https://github.com/pdeljanov/Symphonia) — pure-Rust audio decoding for the AAC→WAV compatibility path
 
 ## ⚖️ License & Disclaimer
 
