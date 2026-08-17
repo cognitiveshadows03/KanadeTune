@@ -339,9 +339,25 @@ async function playCurrent() {
     } catch (e1) {
       if (my !== playToken) return;
       dlog('play: proxy failed:', mediaErr(), String(e1?.message || e1), '— trying direct URL');
-      // Attempt 2: direct googlevideo URL (works in some environments).
-      await playSrc(meta.url, my);
-      dlog('play: DIRECT OK');
+      try {
+        // Attempt 2: direct googlevideo URL (works in some environments).
+        await playSrc(meta.url, my);
+        dlog('play: DIRECT OK');
+      } catch (e2) {
+        // Self-healing: if an AAC stream hit a format error, this machine
+        // cannot decode AAC (canPlayType lied). Blacklist AAC and retry the
+        // SAME track — the picker will now select Opus.
+        const formatErr = /SRC_NOT_SUPPORTED|Format error/i.test(String(e2?.message || '') + mediaErr());
+        const wasAac = /mp4a|mp4/i.test(meta.mime);
+        const notYetMarked = !ytm.codecSupport().aacBroken;
+        if (formatErr && wasAac && notYetMarked && my === playToken) {
+          ytm.markAacBroken();
+          toast('Adjusting audio format for this PC…');
+          dlog('play: retrying same track with AAC blacklisted');
+          return playCurrent();
+        }
+        throw e2;
+      }
     }
     if (my !== playToken) return;
     pushRecent(t);
