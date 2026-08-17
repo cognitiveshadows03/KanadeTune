@@ -369,3 +369,6 @@ svg { width: 20px; height: 20px; fill: currentColor; display: block; }
   font-size: 24px; letter-spacing: 0.18em; color: var(--accent); font-weight: 700;
 }
 .modalBtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+
+.selectable, .selectable * { user-select: text !important; cursor: text; }
+#diagOut { user-select: text !important; cursor: text; }

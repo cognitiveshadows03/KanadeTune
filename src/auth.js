@@ -24,7 +24,7 @@ export async function signIn(onCode) {
   const yt = await Innertube.create({
     fetch: (i, init) => tfetch(i, init),
     cache: new UniversalCache(false),
-    generate_session_locally: true
+
   });
 
   return new Promise((resolve, reject) => {
@@ -55,7 +55,7 @@ export async function signOut() {
     const yt = await Innertube.create({
       fetch: (i, init) => tfetch(i, init),
       cache: new UniversalCache(false),
-      generate_session_locally: true
+
     });
     await yt.session.signIn(creds);
     await yt.session.signOut(); // revoke token server-side

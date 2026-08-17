@@ -33,7 +33,6 @@ function getYT() {
       const yt = await Innertube.create({
         fetch: (input, init) => tfetch(input, init),
         cache: new UniversalCache(false),
-        generate_session_locally: true,
         location,
         lang,
         cookie
@@ -223,24 +222,70 @@ export async function library() {
 // Playback-client fallback chain — direct-URL clients first, deciphering last.
 // Each entry carries the User-Agent googlevideo expects for URLs issued to
 // that client; the audio proxy must fetch with the SAME UA or it gets 403.
+// Order matters: ANDROID_VR and VISIONOS return DIRECT (uncipherable) URLs
+// including Opus/WebM, which Chromium can decode in software on any Windows
+// (no Media Foundation needed — AAC fails on N editions / old builds).
+// IOS is last: direct URLs but AAC-only, used when the platform decodes AAC.
 const CLIENTS = [
+  { name: 'ANDROID_VR', ua: 'com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip' },
+  { name: 'VISIONOS', ua: 'com.google.ios.youtube/20.11.6 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X; US) AppleWebKit' },
   { name: 'IOS', ua: 'com.google.ios.youtube/20.11.6 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; US)' },
-  { name: 'ANDROID', ua: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US; SM-S928B) gzip' },
-  { name: 'TV_EMBEDDED', ua: 'Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' },
-  { name: 'WEB', ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36' }
+  { name: 'ANDROID', ua: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US; SM-S928B) gzip' }
 ];
+
+// Codec support probe: WebView2 decodes AAC via Windows Media Foundation,
+// which is MISSING on N editions / some old builds -> SRC_NOT_SUPPORTED.
+// Opus is decoded by Chromium itself (software), so it works everywhere.
+let _codecSup = null;
+export function codecSupport() {
+  if (_codecSup) return _codecSup;
+  try {
+    const a = typeof Audio !== 'undefined' ? new Audio() : null;
+    if (!a) return (_codecSup = { aac: true, opus: true });
+    _codecSup = {
+      aac: !!a.canPlayType('audio/mp4; codecs="mp4a.40.2"'),
+      opus: !!a.canPlayType('audio/webm; codecs="opus"')
+    };
+  } catch { _codecSup = { aac: true, opus: true }; }
+  return _codecSup;
+}
+
+// Pick the best PLAYABLE audio format: opus preferred (universal software
+// decode), AAC only when the platform can actually decode it. Prefer formats
+// that already carry a direct URL (no PoToken/decipher issues).
+function pickFormat(info, sup) {
+  const fmts = (info.streaming_data?.adaptive_formats || [])
+    .filter(f => (f.mime_type || '').startsWith('audio/'));
+  const playable = fmts.filter(f => {
+    const m = f.mime_type || '';
+    if (/opus/i.test(m)) return sup.opus;
+    if (/mp4a/i.test(m)) return sup.aac;
+    return false;
+  });
+  playable.sort((a, b) => {
+    const ad = a.url ? 1 : 0, bd = b.url ? 1 : 0;
+    if (ad !== bd) return bd - ad;               // direct URL first
+    const ao = /opus/i.test(a.mime_type) ? 1 : 0;
+    const bo = /opus/i.test(b.mime_type) ? 1 : 0;
+    if (ao !== bo) return bo - ao;               // opus next
+    return (b.bitrate || 0) - (a.bitrate || 0);  // then bitrate
+  });
+  return playable[0] || null;
+}
 
 export async function stream(id) {
   const yt = await getYT();
+  const sup = codecSupport();
   let lastErr = null;
   for (const { name, ua } of CLIENTS) {
     try {
       const info = await yt.getBasicInfo(id, { client: name });
-      const fmt = info.chooseFormat({ type: 'audio', quality: 'best' });
-      if (!fmt) continue;
+      const fmt = pickFormat(info, sup);
+      if (!fmt) { lastErr = new Error(`no playable format on ${name} (aac:${sup.aac} opus:${sup.opus})`); continue; }
       let url = fmt.url;
       if (!url && typeof fmt.decipher === 'function') {
-        try { url = fmt.decipher(yt.session.player); } catch { /* next client */ }
+        // decipher() is async in youtubei.js v18+
+        try { url = await fmt.decipher(yt.session.player); } catch { /* next client */ }
       }
       if (typeof url === 'string' && url.startsWith('http')) {
         return {
@@ -249,7 +294,8 @@ export async function stream(id) {
           mime: fmt.mime_type || '',
           bitrate: fmt.bitrate || 0,
           durationSec: info.basic_info?.duration ?? null,
-          client: name
+          client: name,
+          codecs: sup
         };
       }
     } catch (e) { lastErr = e; }

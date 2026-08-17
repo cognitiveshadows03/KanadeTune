@@ -132,12 +132,25 @@ async fn proxy_stream(id: String, range: Option<String>) -> tauri::http::Respons
     }
 }
 
+/// Open a URL in the system default browser. The JS-side opener plugin call
+/// silently failed on some machines; this command uses the plugin's Rust API.
+#[tauri::command]
+fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("only http(s) urls allowed".into());
+    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<String>)
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![http_request, register_stream])
+        .invoke_handler(tauri::generate_handler![http_request, register_stream, open_url])
         .register_asynchronous_uri_scheme_protocol("stream", |_ctx, request, responder| {
             let id = request
                 .uri()

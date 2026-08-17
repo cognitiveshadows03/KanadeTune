@@ -763,6 +763,8 @@ $('#btnDiag').addEventListener('click', async () => {
   const out = $('#diagOut');
   out.textContent = 'Testing…';
   const r = {};
+  // codec support first — this is the #1 platform variable
+  r.codecs = ytm.codecSupport();
   try {
     const { probe } = await import('./tfetch.js');
     Object.assign(r, await probe());
@@ -787,6 +789,20 @@ $('#btnDiag').addEventListener('click', async () => {
 
 $('#btnLog').addEventListener('click', () => {
   $('#debugLogOut').textContent = getLog() || '(log is empty — play a song first)';
+});
+$('#btnCopyLog').addEventListener('click', async () => {
+  const text = getLog() || '(empty)';
+  try { await navigator.clipboard.writeText(text); toast('Log copied to clipboard'); }
+  catch { toast('Copy failed — use Export instead'); }
+});
+$('#btnExportLog').addEventListener('click', () => {
+  const text = ['KanadeTune debug log', new Date().toISOString(), navigator.userAgent, '', getLog() || '(empty)'].join('\n');
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `kanadetune-log-${Date.now()}.txt`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 });
 
 /* ---------- about ---------- */
