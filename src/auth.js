@@ -4,7 +4,7 @@
 // short code + google.com/device link; tokens are cached locally.
 // Fallback: paste-your-cookie (power users), stored only on-device.
 import { Innertube, UniversalCache } from 'youtubei.js/web';
-import { fetch as tfetch } from '@tauri-apps/plugin-http';
+import { tauriFetch as tfetch } from './tfetch.js';
 
 const CREDS_KEY = 'kanade.oauth';
 

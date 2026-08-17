@@ -1,7 +1,7 @@
 // artcache.js — size-capped LRU cache for album art in IndexedDB.
 // Every image the app shows goes through getArt(); when total stored bytes
 // exceed the user's cap, least-recently-used entries are evicted.
-import { fetch as tfetch } from '@tauri-apps/plugin-http';
+import { tauriFetch as tfetch } from './tfetch.js';
 
 const DB = 'kanade-art', STORE = 'art';
 const DEFAULT_CAP_MB = 100;

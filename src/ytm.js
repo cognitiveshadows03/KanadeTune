@@ -3,7 +3,7 @@
 // Session is created with the user's region (detected from their IP) + language,
 // and optionally with the user's Google/YouTube cookies for personalized content.
 import { Innertube, UniversalCache } from 'youtubei.js/web';
-import { fetch as tfetch } from '@tauri-apps/plugin-http';
+import { tauriFetch as tfetch } from './tfetch.js';
 import { loadCreds, saveCreds } from './auth.js';
 
 let ytPromise = null;
