@@ -1,6 +1,6 @@
 [package]
 name = "kanadetune"
-version = "0.3.1"
+version = "0.3.2"
 description = "KanadeTune — a light, cute desktop player for YouTube Music"
 authors = ["cognitiveshadows"]
 license = "MIT"
@@ -17,6 +17,8 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate", "http2", "cookies"] }
+base64 = "0.22"
 
 [profile.release]
 panic = "abort"

@@ -670,6 +670,19 @@ async function refreshCacheUsage() {
   $('#cacheUsage').textContent = `${(b / 1024 / 1024).toFixed(1)} MB of ${capSel.value} MB used`;
 }
 
+/* ---------- diagnostics ---------- */
+$('#btnDiag').addEventListener('click', async () => {
+  const out = $('#diagOut');
+  out.textContent = 'Testing…';
+  try {
+    const { probe } = await import('./tfetch.js');
+    const r = await probe();
+    out.textContent = JSON.stringify(r, null, 1);
+  } catch (e) {
+    out.textContent = 'Probe failed: ' + (e?.message || e);
+  }
+});
+
 /* ---------- about ---------- */
 document.querySelectorAll('.aboutCard.link').forEach(c =>
   c.addEventListener('click', () => openUrl(c.dataset.href)));
