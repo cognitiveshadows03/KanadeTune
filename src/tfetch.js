@@ -86,7 +86,10 @@ export async function tauriFetch(input, init) {
     try { respHeaders.append(k, v); } catch { /* forbidden name */ }
   }
 
-  return new Response(b64decode(resp.bodyB64), {
+  // Null-body statuses (204/205/304) must not receive a body or the
+  // Response constructor throws.
+  const nullBody = resp.status === 204 || resp.status === 205 || resp.status === 304;
+  return new Response(nullBody ? null : b64decode(resp.bodyB64), {
     status: resp.status,
     statusText: '',
     headers: respHeaders

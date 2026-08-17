@@ -147,9 +147,13 @@
         <div class="setRow">
           <div style="min-width:0;flex:1">
             <div class="setName">Debug log</div>
-            <div class="setDesc mono" id="debugLogOut" style="white-space:pre-wrap;max-height:260px;overflow-y:auto">Press a song, then open this to see what happened.</div>
+            <div class="setDesc mono selectable" id="debugLogOut" style="white-space:pre-wrap;max-height:260px;overflow-y:auto">Press a song, then open this to see what happened.</div>
           </div>
-          <div class="setCtl"><button id="btnLog" class="btn">Show log</button></div>
+          <div class="setCtl" style="display:flex;flex-direction:column;gap:8px">
+            <button id="btnLog" class="btn">Show log</button>
+            <button id="btnCopyLog" class="btn">Copy all</button>
+            <button id="btnExportLog" class="btn">Export .txt</button>
+          </div>
         </div>
       </div>
     </section>
@@ -160,7 +164,7 @@
         <div class="aboutLogo">♪</div>
         <div>
           <div class="aboutName">KanadeTune</div>
-          <div class="aboutSub" id="aboutVersion">v0.3.4 · MIT License</div>
+          <div class="aboutSub" id="aboutVersion">v0.3.5 · MIT License</div>
           <div class="aboutDesc">A light, cute desktop player for YouTube Music. No backend, no ads — audio streams straight from your machine. 奏でる — to play music.</div>
         </div>
       </div>
