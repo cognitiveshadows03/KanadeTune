@@ -6,6 +6,7 @@ import { Innertube, UniversalCache } from 'youtubei.js/web';
 import { tauriFetch as tfetch } from './tfetch.js';
 import { loadCreds, saveCreds } from './auth.js';
 import { dlog } from './debuglog.js';
+import { rawStream } from './rawplayer.js';
 
 let ytPromise = null;
 
@@ -313,8 +314,21 @@ function pickFormat(info, sup) {
 }
 
 export async function stream(id) {
-  const yt = await getYT();
   const sup = codecSupport();
+  const gl = localStorage.getItem('kanade.geo') || 'US';
+  const hl = (navigator.language || 'en').split('-')[0];
+
+  // Path 1: raw /player calls with full Metrolist-grade device contexts.
+  // These are the payloads proven to work in production Android clients.
+  // visitorData from the youtubei.js session helps pass bot checks.
+  let visitorData = null;
+  try { visitorData = (await getYT()).session?.context?.client?.visitorData || null; } catch { /* fine */ }
+  const raw = await rawStream(id, sup, { gl, hl, visitorData });
+  if (raw) return raw;
+
+  // Path 2: youtubei.js client chain (older behavior) as fallback.
+  dlog('stream: raw path exhausted, falling back to youtubei.js clients');
+  const yt = await getYT();
   let lastErr = null;
   for (const { name, ua } of CLIENTS) {
     try {
