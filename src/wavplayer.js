@@ -69,7 +69,11 @@ export class WavEngine {
     this.buffer = null;
     this.offset = 0;
     const res = await fetch(url);
-    if (!res.ok) throw new Error('wav fetch ' + res.status);
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 120); } catch { /* no body */ }
+      throw new Error('wav fetch ' + res.status + (detail ? ' — ' + detail : ''));
+    }
     const raw = await res.arrayBuffer();
     const { sampleRate, channels, pcm } = parseWav(raw);
     const frames = Math.floor(pcm.length / channels);

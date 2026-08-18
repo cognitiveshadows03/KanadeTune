@@ -209,20 +209,27 @@ async fn get_or_transcode(id: &str, entry: &StreamEntry) -> Result<Arc<Vec<u8>>,
     if let Some((_, wav)) = wav_cache().lock().unwrap().iter().find(|(k, _)| k == id) {
         return Ok(wav.clone());
     }
+    // googlevideo rejects bare full-file GETs (403) but accepts open-ended
+    // Range requests (206) — matches on-device diagnostics.
     let resp = client()
         .get(&entry.url)
         .header("User-Agent", entry.ua.clone())
+        .header("Range", "bytes=0-")
         .send()
         .await
         .map_err(|e| format!("download failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("download status {}", resp.status().as_u16()));
+    let st = resp.status().as_u16();
+    if !(st == 200 || st == 206) {
+        return Err(format!("download status {st}"));
     }
     let data = resp
         .bytes()
         .await
         .map_err(|e| format!("download body failed: {e}"))?
         .to_vec();
+    if data.len() < 10_000 {
+        return Err(format!("download too small: {} bytes", data.len()));
+    }
 
     let wav = tauri::async_runtime::spawn_blocking(move || decode_aac_to_wav(data))
         .await
